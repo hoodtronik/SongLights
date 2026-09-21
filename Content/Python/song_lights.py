@@ -148,21 +148,48 @@ def _source_wav(sound):
 
 
 def _read_wav_mono(path):
-    with wave.open(path, 'rb') as w:
-        sr, ch, sw_bytes, n = w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()
-        raw = w.readframes(n)
-    if sw_bytes == 2:
-        x = np.frombuffer(raw, dtype='<i2').astype(np.float32) / 32768.0
-    elif sw_bytes == 4:
-        x = np.frombuffer(raw, dtype='<i4').astype(np.float32) / 2147483648.0
-    elif sw_bytes == 3:
-        b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3)
+    """Minimal RIFF/WAVE reader -> (mono float32, sample_rate).
+    CLAUDE-NOTE: the stdlib `wave` module rejects float WAVs (format tag 3) and WAVE_FORMAT_EXTENSIBLE
+    (0xFFFE) — both are common exports from DAWs and converters — so we parse the chunks ourselves.
+    Handles 8/16/24/32-bit PCM and 32/64-bit float, any channel count (downmixed to mono)."""
+    import struct
+    with open(path, 'rb') as f:
+        data = f.read()
+    if data[:4] != b'RIFF' or data[8:12] != b'WAVE':
+        raise RuntimeError('not a RIFF/WAVE file: %s' % path)
+    pos, fmt, pcm = 12, None, None
+    while pos + 8 <= len(data):
+        cid, size = data[pos:pos + 4], struct.unpack('<I', data[pos + 4:pos + 8])[0]
+        body = data[pos + 8:pos + 8 + size]
+        if cid == b'fmt ':
+            tag, ch, sr, _, _, bits = struct.unpack('<HHIIHH', body[:16])
+            if tag == 0xFFFE and len(body) >= 26:            # extensible: real tag is in the sub-format GUID
+                tag = struct.unpack('<H', body[24:26])[0]
+            fmt = (tag, ch, sr, bits)
+        elif cid == b'data':
+            pcm = body
+        pos += 8 + size + (size & 1)
+    if fmt is None or pcm is None:
+        raise RuntimeError('WAV missing fmt/data chunk: %s' % path)
+    tag, ch, sr, bits = fmt
+    if tag == 3 and bits == 32:
+        x = np.frombuffer(pcm, dtype='<f4').astype(np.float32)
+    elif tag == 3 and bits == 64:
+        x = np.frombuffer(pcm, dtype='<f8').astype(np.float32)
+    elif tag == 1 and bits == 16:
+        x = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768.0
+    elif tag == 1 and bits == 32:
+        x = np.frombuffer(pcm, dtype='<i4').astype(np.float32) / 2147483648.0
+    elif tag == 1 and bits == 24:
+        b = np.frombuffer(pcm[:len(pcm) - len(pcm) % 3], dtype=np.uint8).reshape(-1, 3)
         x = ((b[:, 0].astype(np.int32) | (b[:, 1].astype(np.int32) << 8) | (b[:, 2].astype(np.int32) << 16)) << 8 >> 8).astype(np.float32) / 8388608.0
+    elif tag == 1 and bits == 8:
+        x = (np.frombuffer(pcm, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
     else:
-        raise RuntimeError('unsupported WAV sample width %d' % sw_bytes)
+        raise RuntimeError('unsupported WAV encoding (format tag %d, %d-bit): %s' % (tag, bits, path))
     if ch > 1:
-        x = x.reshape(-1, ch).mean(axis=1)
-    return x, sr
+        x = x[:len(x) - len(x) % ch].reshape(-1, ch).mean(axis=1)
+    return np.ascontiguousarray(x), sr
 
 
 def _stft_features(x, sr):
@@ -231,7 +258,7 @@ def separate(wav_path, force=False):
     if exe is None:
         unreal.log_warning('song_lights: no stem separator venv — run Plugins/SongLights/Tools/stems/setup_stems.bat once. Using band analysis of the mix.')
         return None
-    song = os.path.splitext(os.path.basename(wav_path))[0]
+    song = _short_name(os.path.splitext(os.path.basename(wav_path))[0])
     out_dir = os.path.join(_project_dir(), 'Saved', 'SongLights', 'stems', song)
     model_dir = os.path.join(_plugin_dir(), 'Tools', 'stems', 'models')
 
@@ -362,10 +389,20 @@ def build_signals(an, fps=FPS):
 
 # ---------------------------------------------------------------- sequencer -----------------------
 
+def _short_name(asset_name):
+    """'SW_Praise__feat__Brandon_Lake_...__128kbit_AAC_' -> 'Praise'. Downloaded files carry long
+    titles with odd characters; the sequence (and stem cache) get the first word-ish chunk."""
+    import re
+    n = asset_name[3:] if asset_name.startswith('SW_') else asset_name
+    n = n.split('__')[0]                                   # importer turns ' (' into '__' — cut the "(feat. ...)" tail
+    n = re.sub(r'[^0-9A-Za-z]+', '_', n).strip('_')
+    return n[:40].rstrip('_') or 'Song'
+
+
 def _get_or_create_sequence(sound):
     """One Level Sequence per song, next to the SoundWave: /Game/Music/SW_Foo -> /Game/Music/LS_Foo."""
     pkg_dir = os.path.dirname(sound.get_path_name().split('.')[0])
-    name = 'LS_' + sound.get_name().replace('SW_', '', 1)
+    name = 'LS_' + _short_name(sound.get_name())
     path = '%s/%s' % (pkg_dir, name)
     seq = unreal.load_asset(path)
     if seq is None:

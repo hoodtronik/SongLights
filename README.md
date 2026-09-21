@@ -19,6 +19,8 @@ Built and tested on **UE 5.6.1, Windows 11**.
 
 ## Contents
 
+> **Changelog** — 0.1.1: float/extensible WAV support, short sequence names. 0.1.0: first release.
+
 1. [Requirements](#requirements)
 2. [Install](#install)
 3. [Quick start](#quick-start)
@@ -39,27 +41,30 @@ Built and tested on **UE 5.6.1, Windows 11**.
 |---|---|---|
 | Unreal Engine | **5.6** | Content-only plugin; other 5.x may work but are untested. |
 | Engine plugins | Python Editor Script Plugin, Sequencer Scripting, Movie Render Pipeline | All ship with the engine. SongLights declares them as dependencies, so the editor enables them for you. |
-| Song file | **WAV** | Import a WAV. MP3/M4A/etc. must be converted first (e.g. `ffmpeg -i song.m4a -ar 48000 song.wav`). |
+| Song file | **WAV** (16/24/32-bit PCM or 32-bit float) | Import a WAV. MP3/M4A/etc. must be converted first (e.g. `ffmpeg -i song.m4a -ar 48000 song.wav`). |
 | Stems (optional) | NVIDIA GPU + internet for a one-time setup | `uv` or Python 3.10–3.12 on PATH. ~3 GB download (CUDA PyTorch + model weights). |
 
 ---
 
 ## Install
 
-### Option A — clone into your project (recommended)
+### Option A — download the zip (easiest for teammates)
+
+**[⬇ Download SongLights (latest release zip)](https://github.com/hoodtronik/SongLights/releases/latest/download/SongLights.zip)**
+
+Extract it into your project's `Plugins` folder so that this file exists:
+
+```
+YourProject\Plugins\SongLights\SongLights.uplugin
+```
+
+(Create the `Plugins` folder next to your `.uproject` if it doesn't exist yet.)
+
+### Option B — clone into your project
 
 ```bat
 cd C:\Path\To\YourProject
 git clone https://github.com/hoodtronik/SongLights.git Plugins\SongLights
-```
-
-### Option B — download
-
-Download the repository as a zip (green **Code** button → *Download ZIP*), extract, and place the
-folder so that this file exists:
-
-```
-YourProject\Plugins\SongLights\SongLights.uplugin
 ```
 
 ### Then
@@ -104,7 +109,8 @@ In order:
       so a blank level works with nothing but Song + Create.
    Whichever source it used, it writes the result back into the **Light Groups** lists so you can
    see (and change) which light follows what.
-3. **Creates or refreshes `LS_<SongName>`** next to the SoundWave: audio track, camera cut (if
+3. **Creates or refreshes `LS_<SongName>`** next to the SoundWave (the name is shortened — a
+   downloaded "Praise (feat. …) ¦ Elevation Worship (128kbit_AAC)" becomes `LS_Praise`): audio track, camera cut (if
    **Camera** is set), and one **Intensity** track per light with a key every frame at **FPS**.
    Re-running Create rebuilds the sequence from scratch.
 4. **Opens the sequence** in Sequencer.
@@ -241,6 +247,7 @@ same file. Click **Create** after editing; the module is reloaded on every run.
 | Symptom | Cause / fix |
 |---|---|
 | **Create does nothing** | Check *Window → Output Log* for lines starting `song_lights:`. Most often **Song** is unset or isn't a SoundWave. |
+| `unknown format` / `unsupported WAV encoding` | 0.1.0 only read 16/24/32-bit integer WAVs; 0.1.1 also reads 32-bit float and extensible WAVs (what most DAWs and converters export). Update the plugin. |
 | `source WAV for SW_… not found` | The bake reads the file the SoundWave was imported from. Re-import from a WAV that stays on disk (or on a shared drive teammates can reach). |
 | `no stem separator venv` warning | Stems are optional. Run `Tools\stems\setup_stems.bat` to enable them; the bake continues with band analysis meanwhile. |
 | First Create takes a minute | Stem separation runs once per song and is then cached in `Saved/SongLights/stems/`. |
