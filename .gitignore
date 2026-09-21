@@ -1,0 +1,8 @@
+# machine-specific stem environment (rebuilt by Tools/stems/setup_stems.bat)
+Tools/stems/venv/
+Tools/stems/models/
+# editor/python residue
+Intermediate/
+Saved/
+__pycache__/
+*.pyc
