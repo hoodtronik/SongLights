@@ -130,9 +130,11 @@ ACCENT_RIG = [
     # CLAUDE-NOTE: these are a WHISPER, not a wash. At ~2500 cd they flooded the cave, flattened the
     # shaft's contrast and exposed the flat ceiling plates. Low hundreds keeps the rock readable
     # while the cave stays a dark room with one beam in it. Aimed low so they miss the ceiling.
-    ('L_Wall_Wash_L',   (-1150, -1850, 520),   (-14,  55, 0),  (0.45, 0.58, 0.95),  240, (24, 54)),
-    ('L_Wall_Wash_R',   ( 1350, -1750, 560),   (-12, 118, 0),  (0.50, 0.62, 0.95),  200, (26, 56)),
-    ('L_Wall_Wash_B',   (  160,   360, 600),   (-20, -96, 0),  (0.40, 0.54, 0.92),  150, (28, 58)),
+    # Aimed for the wide 4:1 framing (camera at ~(2312,679,645) looking yaw -143.6): each wash
+    # rakes one flank of rock that the frame's edges land on.
+    ('L_Wall_Wash_L',   (  900,  -300, 620),   (-12, 148, 0),  (0.45, 0.58, 0.95),  300, (26, 58)),
+    ('L_Wall_Wash_R',   (  600, -1400, 620),   (-12, -53, 0),  (0.50, 0.62, 0.95),  260, (26, 58)),
+    ('L_Wall_Wash_B',   ( 1200,   200, 700),   (-14, -135, 0), (0.40, 0.54, 0.92),  220, (30, 62)),
 ]
 
 
