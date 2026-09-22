@@ -78,8 +78,42 @@ PHASE_LOOKS = {
 # The treatment's storyboard order. auto_phases() lays these onto detected section boundaries.
 LOOK_ARC = ['dark', 'discover', 'grow', 'reveal', 'deeper', 'tension', 'isolated', 'breakthrough']
 LAYER_KEY = {'L_Shaft_Main': 'core', 'L_Shaft_L': 'halo', 'L_Shaft_R': 'wide'}
-# how hard the music modulates each layer on top of its phase level
-REACT_GAIN = {'core': 0.45, 'halo': 0.60, 'wide': 0.75}
+
+# CLAUDE-NOTE (2026-09-22): the first version drove each layer from a SUSTAINED signal (Song_Loud /
+# Song_Mids). Those are slow envelopes auto-ranged over the whole track, so inside a loud section
+# they pin near 1.0 and hold — `1 + gain*music` collapsed to a constant and the beam looked like it
+# only stepped between phases. Layers are now driven mostly by TRANSIENTS (deviation above a rolling
+# baseline, see _transient) so hits punch through at every phase level, loud section or quiet.
+#   per layer: (sustain signal, sustain weight, transient signal, transient weight)
+SHAFT_DRIVE = {
+    'core': ('Song_Loud', 0.20, 'Song_Kick',  1.00),
+    'halo': ('Song_Mids', 0.30, 'Song_Highs', 0.85),
+    'wide': ('Song_Bass', 0.25, 'Song_Bass',  0.95),
+}
+REACT_GAIN = {'core': 0.55, 'halo': 0.85, 'wide': 1.10}   # intensity swing around the phase level
+CONE_REACT = {'core': 0.10, 'halo': 0.16, 'wide': 0.22}   # beam flares wider on hits
+VOL_REACT = 0.35                                          # haze pulses with the beam
+
+
+def _transient(x, dt, window=1.5):
+    """Deviation of `x` above its own rolling baseline, renormalised to 0..1.
+    This is what makes a kick read identically in a quiet verse and a loud chorus — absolute level
+    is handled by the phase curve, so the music term must carry only the *change*."""
+    k = max(1, int(round(window / dt)))
+    base = np.convolve(x, np.ones(k) / float(k), mode='same')
+    d = np.clip(x - base, 0.0, None)
+    hi = float(np.percentile(d, 97))
+    return np.clip(d / hi, 0.0, 1.0) if hi > 1e-6 else np.zeros_like(d)
+
+
+def layer_drive(key, sig, dt):
+    """0..~1.2 music drive for one shaft layer: a little sustain plus a lot of transient."""
+    s_key, s_w, t_key, t_w = SHAFT_DRIVE[key]
+    sustain = sig.get(s_key, sig['Song_Loud'])
+    raw = sig.get(t_key, sig['Song_Kick'])
+    # Song_Kick is already an onset impulse train; everything else needs baseline removal.
+    trans = raw if t_key == 'Song_Kick' else _transient(raw, dt)
+    return np.clip(s_w * sustain + t_w * trans, 0.0, 1.5)
 
 
 # Wall washes. The shaft alone leaves the cave walls black; these lift the rock on the bigger
@@ -814,7 +848,6 @@ def bake_song(sound_path, camera=None, fps=FPS, phases=None):
 
     # shaft show: section arc (phase) x music reaction, on four properties per layer
     if shafts:
-        src_of = dict((l[0], l[6]) for l in SHAFT_LAYERS)
         for label in sorted(shafts):
             a = shafts[label]
             key = LAYER_KEY[label]
@@ -825,18 +858,28 @@ def bake_song(sound_path, camera=None, fps=FPS, phases=None):
             peak_in = float(lc.get_editor_property('inner_cone_angle'))
             peak_out = float(lc.get_editor_property('outer_cone_angle'))
             peak_vol = float(lc.get_editor_property('volumetric_scattering_intensity'))
-            music = sig.get(src_of.get(label, 'Song_Loud'), sig['Song_Loud'])
-            react = 1.0 + REACT_GAIN[key] * music
+            drive = layer_drive(key, sig, 1.0 / float(fps))
+            # Every property reacts around its phase value: the phase sets where the beam SITS,
+            # the music decides how it moves there. Cone and haze react too, or the beam only
+            # flashes brighter without ever changing shape.
+            react = 1.0 + REACT_GAIN[key] * drive
+            cone_react = 1.0 + CONE_REACT[key] * drive
+            vol_react = 1.0 + VOL_REACT * drive
             _, cbind = _bind_component(seq, a, lc)
             total_keys += _bake_float_track(cbind, 'Intensity', peak_i * ph[key] * react, n)
-            total_keys += _bake_float_track(cbind, 'VolumetricScatteringIntensity', peak_vol * ph['vol'], n)
+            total_keys += _bake_float_track(cbind, 'VolumetricScatteringIntensity',
+                                            peak_vol * ph['vol'] * vol_react, n)
             # cone angles are clamped: UE rejects <=0 and >=80 degrees on a spot light
-            total_keys += _bake_float_track(cbind, 'InnerConeAngle', np.clip(peak_in * ph['cone'], 1.0, 78.0), n)
-            total_keys += _bake_float_track(cbind, 'OuterConeAngle', np.clip(peak_out * ph['cone'], 1.5, 79.0), n)
+            total_keys += _bake_float_track(cbind, 'InnerConeAngle',
+                                            np.clip(peak_in * ph['cone'] * cone_react, 1.0, 78.0), n)
+            total_keys += _bake_float_track(cbind, 'OuterConeAngle',
+                                            np.clip(peak_out * ph['cone'] * cone_react, 1.5, 79.0), n)
 
-        # Accent lights follow the phase level only (no per-frame music) so the cave walls lift with
-        # the sections instead of flickering. Normalised so the brightest look uses authored intensity.
+        # Wall washes get a gentler, slower reaction than the shaft — enough that the rock breathes
+        # with the song rather than sitting flat, but not so much that the walls strobe.
         acc_peak = float(max(ph['accent'].max(), 1e-6))
+        acc_drive = 1.0 + 0.35 * _transient(sig['Song_Loud'], 1.0 / float(fps), window=2.5) \
+                        + 0.20 * sig['Song_Bass']
         for a in accent_lights():
             lc = a.light_component
             peak = float(lc.get_editor_property('intensity'))
@@ -845,7 +888,8 @@ def bake_song(sound_path, camera=None, fps=FPS, phases=None):
             if lc.get_editor_property('mobility') != unreal.ComponentMobility.MOVABLE:
                 lc.set_mobility(unreal.ComponentMobility.MOVABLE)
             _, cbind = _bind_component(seq, a, lc)
-            total_keys += _bake_float_track(cbind, 'Intensity', peak * ph['accent'] / acc_peak, n)
+            total_keys += _bake_float_track(cbind, 'Intensity',
+                                            peak * (ph['accent'] / acc_peak) * acc_drive, n)
         unreal.log('song_lights: shaft show baked over %d phases' % len(phases))
 
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
