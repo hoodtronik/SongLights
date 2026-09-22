@@ -85,10 +85,16 @@ LAYER_KEY = {'L_Shaft_Main': 'core', 'L_Shaft_L': 'halo', 'L_Shaft_R': 'wide'}
 # only stepped between phases. Layers are now driven mostly by TRANSIENTS (deviation above a rolling
 # baseline, see _transient) so hits punch through at every phase level, loud section or quiet.
 #   per layer: (sustain signal, sustain weight, transient signal, transient weight)
+#
+# CLAUDE-NOTE: the halo deliberately does NOT use Song_Highs. The drums stem above 4 kHz in
+# "Who My God Is" carries a CLICK TRACK — autocorrelation 0.973 at a fixed 0.910 s lag, where
+# musical hi-hats score ~0.6 — so the halo ticked like a metronome. Driving it from Song_Mids
+# (the melodic stem) keeps the layer and its pulse musical. If a song's highs are clean, Song_Highs
+# is still a fine transient source; check regularity before trusting it.
 SHAFT_DRIVE = {
-    'core': ('Song_Loud', 0.20, 'Song_Kick',  1.00),
-    'halo': ('Song_Mids', 0.30, 'Song_Highs', 0.85),
-    'wide': ('Song_Bass', 0.25, 'Song_Bass',  0.95),
+    'core': ('Song_Loud', 0.20, 'Song_Kick', 1.00),
+    'halo': ('Song_Mids', 0.30, 'Song_Mids', 0.85),
+    'wide': ('Song_Bass', 0.25, 'Song_Bass', 0.95),
 }
 REACT_GAIN = {'core': 0.55, 'halo': 0.85, 'wide': 1.10}   # intensity swing around the phase level
 CONE_REACT = {'core': 0.10, 'halo': 0.16, 'wide': 0.22}   # beam flares wider on hits
