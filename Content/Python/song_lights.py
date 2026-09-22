@@ -36,6 +36,7 @@ GROUPS = {
     'Song_Highs': dict(base=0.00, attack=0.00, decay=0.07, gamma=2.0, lo=45),
     'Song_Kick':  dict(base=0.00, attack=0.00, decay=0.12, gamma=1.0, lo=10),
     'Song_Loud':  dict(base=0.30, attack=0.30, decay=0.60, gamma=1.0, lo=10),
+    'Song_Vocals':dict(base=0.00, attack=0.04, decay=0.28, gamma=1.5, lo=40),
 }
 
 # ------------------------------------------------------------- shaft show -------------------------
@@ -91,13 +92,18 @@ LAYER_KEY = {'L_Shaft_Main': 'core', 'L_Shaft_L': 'halo', 'L_Shaft_R': 'wide'}
 # musical hi-hats score ~0.6 — so the halo ticked like a metronome. Driving it from Song_Mids
 # (the melodic stem) keeps the layer and its pulse musical. If a song's highs are clean, Song_Highs
 # is still a fine transient source; check regularity before trusting it.
+#
+# CLAUDE-NOTE (2026-09-22): stem-to-layer map set by the director. The INSTRUMENT bed (Other stem)
+# drives the main shaft because it is the most visible layer and carries the song's motion; vocals
+# and bass are the two accents on the softer outer cones. Drums drive nothing any more — the kick
+# was too metronomic to be the hero and the click lives in that stem.
 SHAFT_DRIVE = {
-    'core': ('Song_Loud', 0.20, 'Song_Kick', 1.00),
-    'halo': ('Song_Mids', 0.30, 'Song_Mids', 0.85),
-    'wide': ('Song_Bass', 0.25, 'Song_Bass', 0.95),
+    'core': ('Song_Mids',   0.30, 'Song_Mids',   1.00),   # instruments  -> L_Shaft_Main  (primary)
+    'halo': ('Song_Vocals', 0.35, 'Song_Vocals', 0.90),   # vocals       -> L_Shaft_L     (accent)
+    'wide': ('Song_Bass',   0.25, 'Song_Bass',   0.95),   # bass         -> L_Shaft_R     (accent)
 }
-REACT_GAIN = {'core': 0.55, 'halo': 0.85, 'wide': 1.10}   # intensity swing around the phase level
-CONE_REACT = {'core': 0.10, 'halo': 0.16, 'wide': 0.22}   # beam flares wider on hits
+REACT_GAIN = {'core': 0.70, 'halo': 0.85, 'wide': 1.10}   # intensity swing around the phase level
+CONE_REACT = {'core': 0.14, 'halo': 0.16, 'wide': 0.22}   # beam flares wider on hits
 VOL_REACT = 0.35                                          # haze pulses with the beam
 
 
@@ -505,7 +511,7 @@ import glob
 import subprocess
 
 STEM_MODEL = 'htdemucs_ft.yaml'          # 4 stems: drums / bass / other / vocals
-STEM_NAMES = ('Drums', 'Bass', 'Other')
+STEM_NAMES = ('Drums', 'Bass', 'Other', 'Vocals')
 
 
 def _project_dir():
@@ -631,11 +637,13 @@ def build_signals(an, fps=FPS):
     mix, stems = an['mix'], an['stems']
     if stems:
         d, b, o = stems['Drums'], stems['Bass'], stems['Other']
+        v = stems.get('Vocals', o)          # older caches predate the vocal stem
         raw = {
             'Song_Bass':  _resample(b['times'], b['bands'][:, 0:3].mean(axis=1), t),   # bass stem 40-320 Hz
             'Song_Mids':  _resample(o['times'], o['bands'][:, 2:6].mean(axis=1), t),   # keys/melody stem 160-2560 Hz
             'Song_Highs': _resample(d['times'], d['bands'][:, 6:8].mean(axis=1), t),   # drums stem 2.5-10 kHz = hats
             'Song_Loud':  _resample(mix['times'], mix['loud'], t),
+            'Song_Vocals': _resample(v['times'], v['bands'][:, 1:6].mean(axis=1), t),  # vocal stem 80-2560 Hz
         }
         kick_src = (d['times'], d['flux_low'])                                         # drums stem < 200 Hz = kick
     else:
@@ -645,6 +653,7 @@ def build_signals(an, fps=FPS):
             'Song_Mids':  _resample(mix['times'], bands[:, 2:5].mean(axis=1), t),
             'Song_Highs': _resample(mix['times'], bands[:, 5:8].mean(axis=1), t),
             'Song_Loud':  _resample(mix['times'], mix['loud'], t),
+            'Song_Vocals': _resample(mix['times'], bands[:, 2:6].mean(axis=1), t),
         }
         kick_src = (mix['times'], mix['flux'])
     sig = {}

@@ -185,6 +185,24 @@ per layer — `Intensity`, `InnerConeAngle`, `OuterConeAngle`, `VolumetricScatte
 `phase_level` is the section arc, `music_signal` is the per-frame audio reaction, so you can retune
 the storyboard without touching the music response and vice versa.
 
+### Which stem drives which layer
+
+`SHAFT_DRIVE` maps a stem to each shaft layer. Default:
+
+| Layer | Actor | Stem | Role |
+|---|---|---|---|
+| `core` | `L_Shaft_Main` | Other (instruments) | primary — the most visible beam |
+| `halo` | `L_Shaft_L` | Vocals | accent |
+| `wide` | `L_Shaft_R` | Bass | accent |
+
+Each entry is `(sustain signal, sustain weight, transient signal, transient weight)`. The transient
+term dominates deliberately — see `_transient()`. `REACT_GAIN` sets how far each layer swings around
+its phase level, `CONE_REACT` how much the cone flares on a hit.
+
+Drums drive nothing by default. `Song_Kick` and `Song_Highs` still exist and are fine sources for a
+song with clean drums, but check `regularity` before trusting them: a click track in the drums stem
+autocorrelates near 0.95 at a fixed lag and will make a layer tick like a metronome.
+
 ### Phases
 
 `PHASE_LOOKS` holds nine named looks (`dark`, `discover`, `grow`, `reveal`, `deeper`, `tension`,
