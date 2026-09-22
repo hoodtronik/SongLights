@@ -164,6 +164,60 @@ all five lists are empty.
 
 ---
 
+## Shaft mode — one beam, eight sections
+
+For a cave / shaft-of-light look (one aperture, overlapping cones that open and close with the
+song) rather than a stage rig:
+
+```python
+import song_lights
+song_lights.setup_shaft_rig(origin=(138, -925, 1290))   # just BELOW the ceiling, at the aperture
+song_lights.setup_accent_rig()                          # optional low wall washes
+song_lights.bake_song('/Game/Music/SW_MySong', camera='MyCineCamera', fps=30)
+```
+
+Three spotlights (`L_Shaft_Main` / `_L` / `_R`) share **one origin** and differ only in cone width,
+so they read as a single beam with a bright core and a soft halo. The bake drives four properties
+per layer — `Intensity`, `InnerConeAngle`, `OuterConeAngle`, `VolumetricScatteringIntensity` — as:
+
+    value = phase_level * (1 + react_gain * music_signal)
+
+`phase_level` is the section arc, `music_signal` is the per-frame audio reaction, so you can retune
+the storyboard without touching the music response and vice versa.
+
+### Phases
+
+`PHASE_LOOKS` holds nine named looks (`dark`, `discover`, `grow`, `reveal`, `deeper`, `tension`,
+`isolated`, `breakthrough`, `out`). Each is a set of multipliers on the rig's authored values plus
+a `snap` time — short snaps hit on the downbeat, long ones ease in.
+
+Pass your own map when you know the arrangement:
+
+```python
+song_lights.bake_song(song, phases=[(0,'dark'), (15,'discover'), (54.5,'reveal'),
+                                    (138.7,'isolated'), (178,'breakthrough'), (270,'out')])
+```
+
+Omit `phases` and `auto_phases()` detects section boundaries from the mix (spectral self-similarity
++ a checkerboard novelty kernel) and pins the three structural extremes by energy: the loudest late
+section becomes `breakthrough`, the quietest section before it becomes `isolated`, and a near-silent
+tail becomes `out`. Treat it as a first pass and hand-correct the times.
+
+### Two things that stop the beam rendering
+
+* **Volumetric fog must be enabled and not owned by another system.** Ultra Dynamic Sky re-applies
+  its own `ExponentialHeightFog` values every tick and silently reverts writes — fog edits appear to
+  do nothing. In an interior, delete UDS and add your own fog actor.
+* **The shaft light must hang below the ceiling geometry**, or the ceiling occludes it entirely and
+  you get no beam at all.
+
+Also: past roughly 10k candelas the beam core clips to white and bloom smears it into a ball.
+Brightness belongs in `volumetric_scattering_intensity`, not candelas. And lock exposure with an
+unbound Post Process Volume (`min == max` auto-exposure brightness) — otherwise auto-exposure
+re-normalises every section to mid-grey and flattens the whole dark-to-breakthrough arc.
+
+---
+
 ## Rendering for a show
 
 1. *Window → Cinematics → Movie Render Queue*, add `LS_<SongName>`.

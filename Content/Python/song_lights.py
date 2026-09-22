@@ -38,6 +38,234 @@ GROUPS = {
     'Song_Loud':  dict(base=0.30, attack=0.30, decay=0.60, gamma=1.0, lo=10),
 }
 
+# ------------------------------------------------------------- shaft show -------------------------
+# CLAUDE-NOTE (2026-09-22): "Who My God Is" wants a CAVE LIGHT SHAFT, not a concert rig — one
+# aperture, overlapping concentric cones that widen and brighten across the song's eight sections.
+# All layers share ONE origin so they read as a single beam that opens and closes.
+#
+# Two things must be true in the level or no beam renders at all (both cost a session to find):
+#   * volumetric fog must be enabled AND not owned by Ultra Dynamic Sky — UDS re-applies its own
+#     ExponentialHeightFog values every tick and silently reverts writes. Delete UDS in interiors.
+#   * the shaft light must hang BELOW the ceiling geometry, or the ceiling occludes it completely.
+# Beyond ~10k cd the beam core clips to white and bloom smears it into a ball: brightness belongs in
+# volumetric_scattering_intensity, not in candelas.
+
+SHAFT_TAGS = ('Song_Shaft', 'Song_ShaftSide')
+SHAFT_COLOR = (0.62, 0.78, 1.00)          # cool daylight through rock
+SHAFT_LAYERS = [
+    # label,          tag,               (pitch,yaw), cone(in,out), cd,    vol,  music signal
+    ('L_Shaft_Main',  'Song_Shaft',      (-90,   0),  (3.0,   8.0), 7000,  18.0, 'Song_Loud'),
+    ('L_Shaft_L',     'Song_ShaftSide',  (-87,  -6),  (7.0,  16.0), 2600,  11.0, 'Song_Mids'),
+    ('L_Shaft_R',     'Song_ShaftSide',  (-87,   6),  (12.0, 26.0), 1400,   7.0, 'Song_Bass'),
+]
+
+# The eight treatment looks. Values are MULTIPLIERS on each layer's authored peak, so retuning the
+# rig in the level automatically retunes the whole show.
+#   core/halo/wide = per-layer intensity scale   cone = cone-angle scale
+#   vol            = volumetric scattering scale  accent = level for non-shaft "accent" lights
+#   snap           = seconds to reach the look (short = hits on the downbeat, long = eases in)
+PHASE_LOOKS = {
+    'dark':         dict(core=0.15, halo=0.00, wide=0.00, cone=0.55, vol=0.70, accent=0.03, snap=3.0),
+    'discover':     dict(core=0.35, halo=0.10, wide=0.00, cone=0.70, vol=0.90, accent=0.10, snap=2.5),
+    'grow':         dict(core=0.55, halo=0.30, wide=0.05, cone=0.85, vol=1.00, accent=0.20, snap=2.5),
+    'reveal':       dict(core=1.00, halo=0.75, wide=0.45, cone=1.15, vol=1.20, accent=0.45, snap=0.25),
+    'deeper':       dict(core=0.40, halo=0.18, wide=0.05, cone=0.75, vol=1.00, accent=0.15, snap=2.0),
+    'tension':      dict(core=0.80, halo=0.55, wide=0.30, cone=0.95, vol=1.30, accent=0.35, snap=0.3),
+    'isolated':     dict(core=0.45, halo=0.05, wide=0.00, cone=0.50, vol=1.10, accent=0.05, snap=1.5),
+    'breakthrough': dict(core=1.35, halo=1.00, wide=0.85, cone=1.35, vol=1.40, accent=0.65, snap=0.25),
+    'out':          dict(core=0.00, halo=0.00, wide=0.00, cone=0.50, vol=0.60, accent=0.00, snap=4.0),
+}
+# The treatment's storyboard order. auto_phases() lays these onto detected section boundaries.
+LOOK_ARC = ['dark', 'discover', 'grow', 'reveal', 'deeper', 'tension', 'isolated', 'breakthrough']
+LAYER_KEY = {'L_Shaft_Main': 'core', 'L_Shaft_L': 'halo', 'L_Shaft_R': 'wide'}
+# how hard the music modulates each layer on top of its phase level
+REACT_GAIN = {'core': 0.45, 'halo': 0.60, 'wide': 0.75}
+
+
+# Wall washes. The shaft alone leaves the cave walls black; these lift the rock on the bigger
+# sections so "full reveal" actually reveals something. They are driven by the phase 'accent' level
+# only (never per-frame music) so the walls breathe with the song form instead of flickering.
+ACCENT_RIG = [
+    # label,            loc,                   (pitch,yaw,roll),  color RGB,            cd,   cone(in,out)
+    # CLAUDE-NOTE: these are a WHISPER, not a wash. At ~2500 cd they flooded the cave, flattened the
+    # shaft's contrast and exposed the flat ceiling plates. Low hundreds keeps the rock readable
+    # while the cave stays a dark room with one beam in it. Aimed low so they miss the ceiling.
+    ('L_Wall_Wash_L',   (-1150, -1850, 520),   (-14,  55, 0),  (0.45, 0.58, 0.95),  240, (24, 54)),
+    ('L_Wall_Wash_R',   ( 1350, -1750, 560),   (-12, 118, 0),  (0.50, 0.62, 0.95),  200, (26, 56)),
+    ('L_Wall_Wash_B',   (  160,   360, 600),   (-20, -96, 0),  (0.40, 0.54, 0.92),  150, (28, 58)),
+]
+
+
+def setup_accent_rig(origin=(0.0, 0.0, 0.0)):
+    """Create (or re-place) the cave wall washes. Idempotent by actor label."""
+    sub = _actor_subsystem()
+    o = unreal.Vector(*origin)
+    for label, loc, pyr, rgb, cd, cone in ACCENT_RIG:
+        a = _find_actor(label)
+        pos = unreal.Vector(*loc) + o
+        rot = unreal.Rotator(roll=pyr[2], pitch=pyr[0], yaw=pyr[1])
+        if a is None:
+            a = sub.spawn_actor_from_class(unreal.SpotLight, pos, rot)
+            a.set_actor_label(label)
+        else:
+            a.set_actor_location_and_rotation(pos, rot, False, True)
+        a.tags = [unreal.Name('Song_Accent')]
+        lc = a.light_component
+        lc.set_mobility(unreal.ComponentMobility.MOVABLE)
+        lc.set_editor_property('intensity_units', unreal.LightUnits.CANDELAS)
+        lc.set_editor_property('intensity', float(cd))
+        lc.set_editor_property('light_color', unreal.Color(
+            int(rgb[2] * 255), int(rgb[1] * 255), int(rgb[0] * 255), 255))   # BGRA
+        lc.set_editor_property('inner_cone_angle', float(cone[0]))
+        lc.set_editor_property('outer_cone_angle', float(cone[1]))
+        lc.set_editor_property('attenuation_radius', 5000.0)
+        # CLAUDE-NOTE: wall washes deliberately do NOT scatter — a second volumetric source competes
+        # with the shaft and muddies it. They light surfaces only.
+        lc.set_editor_property('volumetric_scattering_intensity', 0.0)
+    unreal.log('song_lights.setup_accent_rig: %d wall washes' % len(ACCENT_RIG))
+    return [r[0] for r in ACCENT_RIG]
+
+
+def setup_shaft_rig(origin=(138.0, -925.0, 1290.0)):
+    """Create (or re-place) the cave shaft: concentric spotlights sharing one origin.
+    Idempotent by actor label. `origin` should sit just BELOW the ceiling at the aperture."""
+    sub = _actor_subsystem()
+    o = unreal.Vector(*origin)
+    made = []
+    for label, tag, (pitch, yaw), cone, cd, vol, _sig in SHAFT_LAYERS:
+        a = _find_actor(label)
+        rot = unreal.Rotator(roll=0.0, pitch=float(pitch), yaw=float(yaw))
+        if a is None:
+            a = sub.spawn_actor_from_class(unreal.SpotLight, o, rot)
+            a.set_actor_label(label)
+        else:
+            a.set_actor_location_and_rotation(o, rot, False, True)
+        a.tags = [unreal.Name(tag)]
+        lc = a.light_component
+        lc.set_mobility(unreal.ComponentMobility.MOVABLE)
+        lc.set_editor_property('intensity_units', unreal.LightUnits.CANDELAS)
+        lc.set_editor_property('intensity', float(cd))
+        lc.set_editor_property('light_color', unreal.Color(
+            int(SHAFT_COLOR[2] * 255), int(SHAFT_COLOR[1] * 255), int(SHAFT_COLOR[0] * 255), 255))  # BGRA
+        lc.set_editor_property('inner_cone_angle', float(cone[0]))
+        lc.set_editor_property('outer_cone_angle', float(cone[1]))
+        lc.set_editor_property('volumetric_scattering_intensity', float(vol))
+        lc.set_editor_property('attenuation_radius', 4000.0)
+        lc.set_editor_property('source_radius', 4.0)
+        lc.set_editor_property('cast_shadows', True)
+        made.append(label)
+    unreal.log('song_lights.setup_shaft_rig: %d shaft layers at %s' % (len(made), origin))
+    return made
+
+
+def shaft_lights():
+    """{label: actor} for the shaft layers present in the level."""
+    out = {}
+    for a in _actor_subsystem().get_all_level_actors():
+        if isinstance(a, unreal.Light) and a.get_actor_label() in LAYER_KEY:
+            out[a.get_actor_label()] = a
+    return out
+
+
+def accent_lights():
+    """Every non-shaft light — dimmed and lifted by the phase 'accent' level so the cave walls
+    only read once the song opens up."""
+    # CLAUDE-NOTE: SkyLight is excluded — animating ambient to zero crushes the whole cave to black
+    # and fights the shaft instead of supporting it. It stays a constant low bounce.
+    return [a for a in _actor_subsystem().get_all_level_actors()
+            if isinstance(a, unreal.Light) and not isinstance(a, unreal.SkyLight)
+            and a.get_actor_label() not in LAYER_KEY]
+
+
+def auto_phases(an, fps=FPS):
+    """Detect section boundaries from the mix and lay the treatment's look arc onto them.
+    Returns [(start_seconds, look_name), ...] always beginning at 0 and ending with 'out'."""
+    mix = an['mix']
+    b = mix['bands']
+    f = (b - b.mean(axis=0)) / (b.std(axis=0) + 1e-6)
+    f = f / (np.linalg.norm(f, axis=1, keepdims=True) + 1e-9)
+    sim = f @ f.T
+    hop_s = HOP / float(an['sr'])
+    L = max(8, int(round(6.0 / hop_s)))                    # ~6 s checkerboard half-kernel
+    g = np.exp(-((np.arange(2 * L) - L + 0.5) / (L * 0.5)) ** 2)
+    kern = np.outer(g, g) * np.where(
+        (np.arange(2 * L)[:, None] < L) == (np.arange(2 * L)[None, :] < L), 1.0, -1.0)
+    n = sim.shape[0]
+    nov = np.zeros(n)
+    for i in range(L, n - L):
+        nov[i] = (sim[i - L:i + L, i - L:i + L] * kern).sum()
+    nov = np.clip(nov, 0, None)
+    nov /= (nov.max() + 1e-9)
+    min_gap = int(round(12.0 / hop_s))                     # sections are at least 12 s apart
+    peaks = sorted(((nov[i], i) for i in range(1, n - 1)
+                    if nov[i] > 0.18 and nov[i] >= nov[i - 1] and nov[i] >= nov[i + 1]), reverse=True)
+    chosen = []
+    for _v, i in peaks:
+        if all(abs(i - j) >= min_gap for j in chosen):
+            chosen.append(i)
+        if len(chosen) >= len(LOOK_ARC) - 1:
+            break
+    times = [0.0] + sorted(i * hop_s for i in chosen)
+    looks = [LOOK_ARC[min(k, len(LOOK_ARC) - 1)] for k in range(len(times))]
+
+    # CLAUDE-NOTE: assigning the arc purely by position put 'isolated' on the loudest chorus and
+    # 'breakthrough' on the silent tail. The three structural extremes are pinned by ENERGY instead,
+    # and only the connective sections keep their positional look.
+    edges = times + [an['duration']]
+    lt, loud = mix['times'], mix['loud']
+    energy = []
+    for a0, a1 in zip(edges[:-1], edges[1:]):
+        m = (lt >= a0) & (lt < a1)
+        energy.append(float(loud[m].mean()) if m.any() else -120.0)
+    peak = max(energy)
+    if len(energy) > 2:
+        if energy[-1] < peak - 18.0:                       # near-silent trailing section = outro
+            looks[-1] = 'out'
+        tail_i = len(energy) - (1 if looks[-1] == 'out' else 0)
+        loud_i = max(range(len(energy) // 2, tail_i), key=lambda i: energy[i])
+        # everything from the loudest late section to the outro stays at full breakthrough —
+        # otherwise the sections after it fall back to their positional look (the final chorus
+        # was being assigned 'isolated' and dropping the beam out at the song's biggest moment).
+        for i in range(loud_i, tail_i):
+            looks[i] = 'breakthrough'
+        quiet = list(range(max(1, len(energy) // 3), loud_i))
+        if quiet:
+            looks[min(quiet, key=lambda i: energy[i])] = 'isolated'   # quietest before it = bridge
+    phases = list(zip(times, looks))
+    if looks[-1] != 'out':
+        tail = max(0.0, an['duration'] - 9.0)
+        if tail > phases[-1][0] + 4.0:
+            phases.append((tail, 'out'))
+    unreal.log('song_lights.auto_phases: ' + ', '.join('%.1fs %s' % p for p in phases))
+    return phases
+
+
+def phase_tracks(phases, duration, fps=FPS):
+    """Sample the phase look table to per-frame arrays: {field: ndarray(n)} for
+    core/halo/wide/cone/vol/accent. Each transition ramps over that look's `snap` seconds."""
+    n = int(math.ceil(duration * fps)) + 1
+    t = np.arange(n) / float(fps)
+    fields = ('core', 'halo', 'wide', 'cone', 'vol', 'accent')
+    out = {k: np.zeros(n) for k in fields}
+    seq = sorted(phases, key=lambda p: p[0])
+    for k in fields:
+        y = np.zeros(n)
+        prev = PHASE_LOOKS[seq[0][1]][k]
+        for idx, (start, look) in enumerate(seq):
+            look_d = PHASE_LOOKS[look]
+            target = look_d[k]
+            snap = max(1.0 / fps, float(look_d['snap']))
+            end = seq[idx + 1][0] if idx + 1 < len(seq) else duration + 1.0
+            ramp = (t >= start) & (t < start + snap)
+            hold = (t >= start + snap) & (t < end)
+            y[ramp] = prev + (target - prev) * ((t[ramp] - start) / snap)
+            y[hold] = target
+            prev = target
+        y[t < seq[0][0]] = PHASE_LOOKS[seq[0][1]][k]
+        out[k] = y
+    return out
+
+
 # ---------------------------------------------------------------- rig -----------------------------
 
 # CLAUDE-NOTE: candela falls off 1/d^2 — the 13-16 m throws (mid beams, strobe) need thousands of cd
@@ -497,7 +725,23 @@ def create(sound_path, camera=None, fps=FPS):
     return bake_song(sound_path, camera=camera, fps=fps)
 
 
-def bake_song(sound_path, camera=None, fps=FPS):
+def _bake_float_track(cbind, prop, values, n, fps_unused=None):
+    """One float property track on a component binding, one linear key per frame."""
+    tr = cbind.add_track(unreal.MovieSceneFloatTrack)
+    tr.set_property_name_and_path(prop, prop)
+    sec = tr.add_section()
+    sec.set_range(0, n)
+    ch = sec.get_all_channels()[0]
+    for i, v in enumerate(values):
+        ch.add_key(unreal.FrameNumber(i), float(v), 0.0,
+                   unreal.MovieSceneTimeUnit.DISPLAY_RATE, unreal.MovieSceneKeyInterpolation.LINEAR)
+    return n
+
+
+def bake_song(sound_path, camera=None, fps=FPS, phases=None):
+    """`phases` = [(start_seconds, look_name), ...] using PHASE_LOOKS keys, or None to auto-detect.
+    When shaft lights are present the bake drives Intensity, cone angles and volumetric scattering
+    as phase_level * (1 + gain * music), so the section arc and the music reaction are separable."""
     sound = unreal.load_asset(sound_path)
     if sound is None or not isinstance(sound, unreal.SoundWave):
         raise RuntimeError('bake_song: %s is not a SoundWave' % sound_path)
@@ -505,11 +749,19 @@ def bake_song(sound_path, camera=None, fps=FPS):
     # light currently holds an *evaluated* value, and baking from that drifts the peak every run
     # (seen: 25 cd read back as 30.3). Closing the sequence restores the pre-animated state first.
     unreal.LevelSequenceEditorBlueprintLibrary.close_level_sequence()
-    groups = resolve_groups(_find_director(sound))
+    shafts = shaft_lights()
+    # CLAUDE-NOTE: auto_rig would respawn the legacy concert rig whenever no lights are tagged. In a
+    # shaft show that is exactly wrong — the cave wants one beam, not 14 fixtures.
+    groups = resolve_groups(_find_director(sound), auto_rig=not shafts)
     an = analyze(sound)
     duration = an['duration']
     sig = build_signals(an, fps)
     n = len(next(iter(sig.values())))
+    ph = None
+    if shafts:
+        if phases is None:
+            phases = auto_phases(an, fps)
+        ph = phase_tracks(phases, duration, fps)
 
     fps = int(fps) if fps else FPS
     seq = _get_or_create_sequence(sound)
@@ -559,6 +811,43 @@ def bake_song(sound_path, camera=None, fps=FPS):
             for k, v in zip(keys, vals):
                 ch.add_key(k, v, 0.0, unreal.MovieSceneTimeUnit.DISPLAY_RATE, unreal.MovieSceneKeyInterpolation.LINEAR)
             total_keys += n
+
+    # shaft show: section arc (phase) x music reaction, on four properties per layer
+    if shafts:
+        src_of = dict((l[0], l[6]) for l in SHAFT_LAYERS)
+        for label in sorted(shafts):
+            a = shafts[label]
+            key = LAYER_KEY[label]
+            lc = a.light_component
+            if lc.get_editor_property('mobility') != unreal.ComponentMobility.MOVABLE:
+                lc.set_mobility(unreal.ComponentMobility.MOVABLE)
+            peak_i = float(lc.get_editor_property('intensity'))
+            peak_in = float(lc.get_editor_property('inner_cone_angle'))
+            peak_out = float(lc.get_editor_property('outer_cone_angle'))
+            peak_vol = float(lc.get_editor_property('volumetric_scattering_intensity'))
+            music = sig.get(src_of.get(label, 'Song_Loud'), sig['Song_Loud'])
+            react = 1.0 + REACT_GAIN[key] * music
+            _, cbind = _bind_component(seq, a, lc)
+            total_keys += _bake_float_track(cbind, 'Intensity', peak_i * ph[key] * react, n)
+            total_keys += _bake_float_track(cbind, 'VolumetricScatteringIntensity', peak_vol * ph['vol'], n)
+            # cone angles are clamped: UE rejects <=0 and >=80 degrees on a spot light
+            total_keys += _bake_float_track(cbind, 'InnerConeAngle', np.clip(peak_in * ph['cone'], 1.0, 78.0), n)
+            total_keys += _bake_float_track(cbind, 'OuterConeAngle', np.clip(peak_out * ph['cone'], 1.5, 79.0), n)
+
+        # Accent lights follow the phase level only (no per-frame music) so the cave walls lift with
+        # the sections instead of flickering. Normalised so the brightest look uses authored intensity.
+        acc_peak = float(max(ph['accent'].max(), 1e-6))
+        for a in accent_lights():
+            lc = a.light_component
+            peak = float(lc.get_editor_property('intensity'))
+            if peak <= 0.0:
+                continue
+            if lc.get_editor_property('mobility') != unreal.ComponentMobility.MOVABLE:
+                lc.set_mobility(unreal.ComponentMobility.MOVABLE)
+            _, cbind = _bind_component(seq, a, lc)
+            total_keys += _bake_float_track(cbind, 'Intensity', peak * ph['accent'] / acc_peak, n)
+        unreal.log('song_lights: shaft show baked over %d phases' % len(phases))
+
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
     unreal.log('song_lights: baked %d lights, %d keys, %d frames @ %dfps -> %s' % (
         sum(len(v) for v in groups.values()), total_keys, n, fps, seq.get_path_name()))
